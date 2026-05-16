@@ -1,4 +1,33 @@
 {
-  "name": "VitalSync",
-  "displayName": "VitalSync"
+  "expo": {
+    "name": "Command-X",
+    "slug": "command-x",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    // "icon": "./assets/icon.png",
+    "splash": {
+      // "image": "./assets/splash.png",
+      // "resizeMode": "contain",
+      // "backgroundColor": "#FFFFFF"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.vitalsync",
+      "adaptiveIcon": {
+        // "foregroundImage": "./assets/adaptive-icon.png",
+        // "backgroundColor": "#FFFFFF"
+      }
+    },
+    "web": {
+      // "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "apiBaseUrl": "http://192.168.100.175:5000",
+      "socketUrl": "http://192.168.100.175:5000"
+    }
+  }
 }
