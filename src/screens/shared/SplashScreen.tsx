@@ -25,8 +25,16 @@ export function SplashScreen() {
 
     Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
+          useNativeDriver: true,
+        }),
       ]),
     ).start();
   }, [pulse, spin]);
@@ -51,24 +59,48 @@ export function SplashScreen() {
     [spin],
   );
 
-  const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
-  const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.12] });
+  const ringScale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.08],
+  });
+  const ringOpacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.35, 0.12],
+  });
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.white }]}>
       <View style={styles.center}>
         <View style={styles.logoWrap}>
-          <Animated.View style={[styles.ring, { transform: [{ rotate }, { scale: ringScale }], opacity: ringOpacity }]}>
+          <Animated.View
+            style={[
+              styles.ring,
+              {
+                transform: [{ rotate }, { scale: ringScale }],
+                opacity: ringOpacity,
+              },
+            ]}
+          >
             <AppGradient style={styles.ringFill} />
           </Animated.View>
 
-          <View style={[styles.logoCore, { backgroundColor: theme.colors.white }]}>
-            <Ionicons name="medical" size={scale(30)} color={theme.colors.accent} />
+          <View
+            style={[styles.logoCore, { backgroundColor: theme.colors.white }]}
+          >
+            <Ionicons
+              name="medical"
+              size={scale(30)}
+              color={theme.colors.accent}
+            />
           </View>
         </View>
 
-        <GradientText style={[styles.title, { color: theme.colors.text }]}>Command-X</GradientText>
-        <Text style={[styles.tagline, { color: theme.colors.textSecondary }]}>Intelligent Health Surveillance</Text>
+        <GradientText style={[styles.title, { color: theme.colors.text }]}>
+          VitalSync
+        </GradientText>
+        <Text style={[styles.tagline, { color: theme.colors.textSecondary }]}>
+          Intelligent Health Surveillance
+        </Text>
       </View>
     </View>
   );
@@ -115,4 +147,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-

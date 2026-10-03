@@ -1,33 +1,24 @@
 {
   "expo": {
-    "name": "Command-X",
-    "slug": "command-x",
+    "name": "VitalSync",
+    "slug": "vitalsync",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    // "icon": "./assets/icon.png",
-    "splash": {
-      // "image": "./assets/splash.png",
-      // "resizeMode": "contain",
-      // "backgroundColor": "#FFFFFF"
-    },
+    "splash": {},
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.vitalsync",
-      "adaptiveIcon": {
-        // "foregroundImage": "./assets/adaptive-icon.png",
-        // "backgroundColor": "#FFFFFF"
-      }
+      "adaptiveIcon": {}
     },
-    "web": {
-      // "favicon": "./assets/favicon.png"
-    },
+    "web": {},
     "extra": {
-      "apiBaseUrl": "http://192.168.100.175:5000",
-      "socketUrl": "http://192.168.100.175:5000"
-    }
+      "apiBaseUrl": "http://localhost:5000",
+      "socketUrl": "http://localhost:5000"
+    },
+    "plugins": ["@react-native-google-signin/google-signin"]
   }
 }

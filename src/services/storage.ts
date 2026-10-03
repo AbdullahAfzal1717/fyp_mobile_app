@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const storageKeys = {
-  auth: 'commandx.auth.v1',
-  alertsRead: 'commandx.alerts.read.v1',
+  auth: 'vitalsync.auth.v1',
+  alertsRead: 'vitalsync.alerts.read.v1',
 };
 
 export async function setJson(key: string, value: unknown) {

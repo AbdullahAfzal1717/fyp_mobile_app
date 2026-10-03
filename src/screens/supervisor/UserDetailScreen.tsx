@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Dimensions,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
-import {
-  VictoryAxis,
-  VictoryChart,
-  VictoryLine,
-  VictoryTheme,
-} from 'victory-native';
+import { LineChart } from 'react-native-chart-kit';
 
 import { GlassCard } from '../../components/GlassCard';
 import { MetricCard } from '../../components/MetricCard';
@@ -22,7 +24,21 @@ import type { SupervisorStackParamList } from '../../navigation/types';
 import { useTheme } from '../../theme/AppThemeProvider';
 import { formatTimeAgo } from '../../utils/format';
 
+const screenWidth = Dimensions.get('window').width;
+
 type MetricTab = 'HR' | 'SpO2' | 'Temp';
+
+// Clamp a value between min and max to prevent chart rendering issues
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+// Sanitize a single value — return null if invalid
+function sanitize(v: unknown): number | null {
+  const n = Number(v);
+  if (v == null || isNaN(n) || !isFinite(n)) return null;
+  return n;
+}
 
 export function UserDetailScreen() {
   const theme = useTheme();
@@ -70,7 +86,9 @@ export function UserDetailScreen() {
       setLive(payload.vital);
     };
     s?.on('vitals:update', onVitals);
-    return () => s?.off('vitals:update', onVitals);
+    return () => {
+      s?.off('vitals:update', onVitals);
+    };
   }, [userId]);
 
   async function onRefresh() {
@@ -82,22 +100,56 @@ export function UserDetailScreen() {
     }
   }
 
-  const series = useMemo(() => {
+  // Build safe chart data from history
+  const safeChartData = useMemo(() => {
     const key =
       metric === 'HR'
         ? 'heartRate'
         : metric === 'SpO2'
         ? 'spo2'
         : 'temperature';
-    return history
-      .filter(v => (v as Record<string, unknown>)[key] != null)
+
+    // Clamp ranges per metric to avoid extreme outliers breaking the chart
+    const clampRange: Record<MetricTab, [number, number]> = {
+      HR: [20, 250],
+      SpO2: [50, 100],
+      Temp: [30, 45],
+    };
+    const [minVal, maxVal] = clampRange[metric];
+
+    const points = history
       .slice()
       .reverse()
-      .map(v => ({
-        x: new Date(v.timestamp),
-        y: Number((v as Record<string, unknown>)[key]),
-      }));
+      .map(v => sanitize((v as Record<string, unknown>)[key]))
+      .filter((v): v is number => v !== null)
+      .map(v => clamp(v, minVal, maxVal));
+
+    // Chart needs at least 2 points
+    if (points.length < 2) return null;
+
+    // Limit to last 30 points to keep labels readable
+    const trimmed = points.slice(-30);
+
+    const labels = trimmed.map((_, i) => {
+      if (i === 0 || i === trimmed.length - 1) return `${i + 1}`;
+      if (trimmed.length <= 10) return `${i + 1}`;
+      return i % 5 === 0 ? `${i + 1}` : '';
+    });
+
+    return { data: trimmed, labels };
   }, [history, metric]);
+
+  const stats = useMemo(() => {
+    if (!safeChartData || safeChartData.data.length === 0)
+      return { avg: 0, min: 0, max: 0 };
+    const ys = safeChartData.data;
+    const sum = ys.reduce((a, b) => a + b, 0);
+    return {
+      avg: sum / ys.length,
+      min: Math.min(...ys),
+      max: Math.max(...ys),
+    };
+  }, [safeChartData]);
 
   const explanation = useMemo(() => {
     if (!live) return 'No live vitals yet. Waiting for the wearable to sync.';
@@ -117,8 +169,11 @@ export function UserDetailScreen() {
       : theme.colors.safe;
   }, [live, theme.colors]);
 
+  const unit = metric === 'HR' ? 'bpm' : metric === 'SpO2' ? '%' : '°C';
+
   return (
     <Screen scroll refreshing={refreshing} onRefresh={onRefresh}>
+      {/* Header */}
       <View style={styles.top}>
         <Pressable
           hitSlop={12}
@@ -144,6 +199,7 @@ export function UserDetailScreen() {
         {live ? <RiskBadge level={live.riskLevel} /> : null}
       </View>
 
+      {/* Risk Score */}
       <GlassCard style={styles.riskCard}>
         <Text
           style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}
@@ -166,6 +222,7 @@ export function UserDetailScreen() {
         </View>
       </GlassCard>
 
+      {/* Live Metric Cards */}
       <View style={styles.metricsRow}>
         <MetricCard
           title="HR"
@@ -199,6 +256,7 @@ export function UserDetailScreen() {
         />
       </View>
 
+      {/* Trend Chart */}
       <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
         Trend
       </Text>
@@ -235,43 +293,103 @@ export function UserDetailScreen() {
       </View>
 
       <GlassCard style={styles.chartCard}>
-        <VictoryChart
-          theme={VictoryTheme.material}
-          height={220}
-          padding={{ left: 44, top: 14, right: 20, bottom: 36 }}
-          scale={{ x: 'time' }}
-        >
-          <VictoryAxis
-            style={{
-              axis: { stroke: 'rgba(226,232,240,0.9)' },
-              tickLabels: {
-                fill: theme.colors.textSecondary,
-                fontSize: 10,
-                fontWeight: '700',
-              },
-              grid: { stroke: 'rgba(226,232,240,0.35)' },
-            }}
-          />
-          <VictoryAxis
-            dependentAxis
-            style={{
-              axis: { stroke: 'rgba(226,232,240,0.9)' },
-              tickLabels: {
-                fill: theme.colors.textSecondary,
-                fontSize: 10,
-                fontWeight: '700',
-              },
-              grid: { stroke: 'rgba(226,232,240,0.35)' },
-            }}
-          />
-          <VictoryLine
-            data={series}
-            interpolation="monotoneX"
-            style={{ data: { stroke: theme.colors.accent, strokeWidth: 3 } }}
-          />
-        </VictoryChart>
+        {safeChartData ? (
+          <>
+            {/* Mini stats above chart */}
+            <View style={styles.statsRow}>
+              {[
+                {
+                  label: 'Avg',
+                  value:
+                    metric === 'Temp'
+                      ? stats.avg.toFixed(1)
+                      : Math.round(stats.avg),
+                },
+                {
+                  label: 'Min',
+                  value:
+                    metric === 'Temp'
+                      ? stats.min.toFixed(1)
+                      : Math.round(stats.min),
+                },
+                {
+                  label: 'Max',
+                  value:
+                    metric === 'Temp'
+                      ? stats.max.toFixed(1)
+                      : Math.round(stats.max),
+                },
+              ].map(s => (
+                <View key={s.label} style={styles.statItem}>
+                  <Text
+                    style={[
+                      styles.statLabel,
+                      { color: theme.colors.textSecondary },
+                    ]}
+                  >
+                    {s.label}
+                  </Text>
+                  <Text
+                    style={[styles.statValue, { color: theme.colors.text }]}
+                  >
+                    {s.value}{' '}
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        color: theme.colors.textSecondary,
+                      }}
+                    >
+                      {unit}
+                    </Text>
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            <LineChart
+              data={{
+                labels: safeChartData.labels,
+                datasets: [{ data: safeChartData.data }],
+              }}
+              width={screenWidth - 64}
+              height={200}
+              withDots={safeChartData.data.length <= 10}
+              withInnerLines={true}
+              withOuterLines={false}
+              bezier
+              chartConfig={{
+                backgroundColor: 'transparent',
+                backgroundGradientFrom: 'transparent',
+                backgroundGradientTo: 'transparent',
+                backgroundGradientFromOpacity: 0,
+                backgroundGradientToOpacity: 0,
+                color: () => theme.colors.accent,
+                labelColor: () => theme.colors.textSecondary,
+                strokeWidth: 3,
+                propsForBackgroundLines: {
+                  stroke: 'rgba(226,232,240,0.35)',
+                },
+              }}
+              style={styles.chart}
+            />
+          </>
+        ) : (
+          <View style={styles.noData}>
+            <Ionicons
+              name="analytics-outline"
+              size={32}
+              color={theme.colors.textSecondary}
+            />
+            <Text
+              style={[styles.noDataText, { color: theme.colors.textSecondary }]}
+            >
+              Not enough data to show a trend
+            </Text>
+          </View>
+        )}
       </GlassCard>
 
+      {/* AI Analysis */}
       <GlassCard style={styles.aiCard}>
         <Text
           style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}
@@ -300,6 +418,7 @@ export function UserDetailScreen() {
         </Text>
       </GlassCard>
 
+      {/* Recent Alerts */}
       <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
         Recent alerts
       </Text>
@@ -371,7 +490,23 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   tabText: { fontSize: 12, fontWeight: '900' },
-  chartCard: { marginTop: 12, paddingVertical: 8 },
+  chartCard: { marginTop: 12, padding: 12 },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 8,
+  },
+  statItem: { alignItems: 'center' },
+  statLabel: { fontSize: 11, fontWeight: '800' },
+  statValue: { fontSize: 15, fontWeight: '900', marginTop: 2 },
+  chart: { borderRadius: 12, marginLeft: -8 },
+  noData: {
+    height: 180,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  noDataText: { fontSize: 13, fontWeight: '700', marginTop: 8 },
   aiCard: { marginTop: 14, padding: 16 },
   aiLine: { marginTop: 10, fontSize: 14, fontWeight: '700' },
   aiExplain: { marginTop: 10, fontSize: 13, fontWeight: '700', lineHeight: 20 },

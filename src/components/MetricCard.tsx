@@ -27,8 +27,16 @@ export function MetricCard({
     if (!livePulse) return;
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
+          useNativeDriver: true,
+        }),
       ]),
     );
     loop.start();
@@ -36,30 +44,48 @@ export function MetricCard({
   }, [livePulse, pulse]);
 
   const ringStyle = useMemo(() => {
-    const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
-    const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0.06] });
+    const scale = pulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.18],
+    });
+    const opacity = pulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.22, 0.06],
+    });
     return { transform: [{ scale }], opacity };
   }, [pulse]);
 
   return (
     <GlassCard style={styles.card} intensity={18}>
       <View style={styles.head}>
-        <View style={[styles.iconWrap, { backgroundColor: 'rgba(37,99,235,0.08)' }]}>
+        <View
+          style={[styles.iconWrap, { backgroundColor: 'rgba(37,99,235,0.08)' }]}
+        >
           {livePulse ? (
-            <Animated.View style={[styles.ring, { backgroundColor: accent }, ringStyle]} />
+            <Animated.View
+              style={[styles.ring, { backgroundColor: accent }, ringStyle]}
+            />
           ) : null}
           <Ionicons name={icon} size={18} color={accent} />
         </View>
-        <Text style={[styles.title, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+        <Text
+          style={[styles.title, { color: theme.colors.textSecondary }]}
+          numberOfLines={1}
+        >
           {title}
         </Text>
       </View>
 
       <View style={styles.valueRow}>
-        <Text style={[styles.value, { color: theme.colors.text }]} numberOfLines={1}>
+        <Text
+          style={[styles.value, { color: theme.colors.text }]}
+          numberOfLines={1}
+        >
           {value}
         </Text>
-        <Text style={[styles.unit, { color: theme.colors.textSecondary }]}>{unit}</Text>
+        <Text style={[styles.unit, { color: theme.colors.textSecondary }]}>
+          {unit}
+        </Text>
       </View>
     </GlassCard>
   );
@@ -93,4 +119,3 @@ const styles = StyleSheet.create({
   value: { fontSize: 20, fontWeight: '900', marginRight: 6 },
   unit: { fontSize: 12, fontWeight: '800', paddingBottom: 2 },
 });
-

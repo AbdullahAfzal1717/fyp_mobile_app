@@ -29,7 +29,8 @@ export function Chip({
           borderColor: border,
         },
         style,
-      ]}>
+      ]}
+    >
       <Text style={[styles.text, { color }]}>{label}</Text>
     </Pressable>
   );
@@ -45,4 +46,3 @@ const styles = StyleSheet.create({
   },
   text: { fontSize: 12, fontWeight: '900' },
 });
-

@@ -1,3 +1,6 @@
+// src/navigation/types.ts
+// Updated with all new screens for auth flows, profile image, etc.
+
 export type RootStackParamList = {
   Splash: undefined;
   Auth: undefined;
@@ -8,6 +11,9 @@ export type RootStackParamList = {
 export type AuthStackParamList = {
   Login: undefined;
   Signup: undefined;
+  EmailVerification: { email: string }; // NEW: after signup, verify email
+  ForgotPassword: undefined; // NEW: forgot password entry
+  ResetPassword: { email: string }; // NEW: enter OTP + new password
 };
 
 export type UserTabParamList = {
@@ -35,4 +41,3 @@ export type SupervisorStackParamList = {
   SupervisorTabs: undefined;
   UserDetail: { userId: string; patientName?: string };
 };
-

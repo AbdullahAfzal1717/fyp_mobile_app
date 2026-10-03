@@ -1,132 +1,184 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-import { AuthHeader } from './AuthHeader';
-import { GradientButton } from '../../components/GradientButton';
-import { RoleToggleCard } from '../../components/RoleToggleCard';
+import { useAuth } from '../../state/auth/AuthProvider';
+import { useTheme } from '../../theme/AppThemeProvider';
+import { getApiErrorMessage } from '../../services/apiClient';
+import type { AuthStackParamList } from '../../navigation/types';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
-import { GlassCard } from '../../components/GlassCard';
-import { useTheme } from '../../theme/AppThemeProvider';
-import type { AuthStackParamList } from '../../navigation/types';
-import { useAuth } from '../../state/auth/AuthProvider';
+import { GradientButton } from '../../components/GradientButton';
+import { RoleToggleCard } from '../../components/RoleToggleCard';
 import type { Role } from '../../state/auth/types';
-import { getApiErrorMessage } from '../../services/apiClient';
+
+type Nav = NativeStackNavigationProp<AuthStackParamList>;
 
 export function SignupScreen() {
   const theme = useTheme();
-  const nav = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
+  const navigation = useNavigation<Nav>();
   const { signup } = useAuth();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [show, setShow] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<Role>('USER');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const canSubmit = useMemo(() => name.trim().length >= 2 && email.trim().length > 3 && password.length >= 6, [email, name, password]);
+  const canSubmit =
+    name.trim().length >= 2 &&
+    email.trim().length > 4 &&
+    password.length >= 6 &&
+    !loading;
 
-  async function onSubmit() {
-    if (!canSubmit || loading) return;
+  async function handleSignup() {
+    if (!canSubmit) return;
+    setError('');
     setLoading(true);
     try {
-      await signup({ name: name.trim(), email: email.trim(), password, role });
+      const { email: confirmedEmail } = await signup({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        password,
+        role,
+      });
+      navigation.navigate('EmailVerification', { email: confirmedEmail });
     } catch (e) {
-      Alert.alert('Signup failed', getApiErrorMessage(e));
+      setError(getApiErrorMessage(e));
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <Screen keyboard scroll style={{ backgroundColor: theme.colors.white }}>
-      <View style={styles.page}>
-        <AuthHeader title="Create account" subtitle="Set up your role and start monitoring" />
-
-        <View style={styles.cardWrap}>
-          <GlassCard style={styles.card}>
-            <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Let’s get started</Text>
-            <Text style={[styles.cardSub, { color: theme.colors.textSecondary }]}>Choose your role and continue</Text>
-
-            <View style={{ height: 16 }} />
-            <TextField label="Full name" leftIcon="person-outline" value={name} onChangeText={setName} placeholder="Your name" />
-            <View style={{ height: 12 }} />
-            <TextField
-              label="Email"
-              leftIcon="mail-outline"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              placeholder="you@example.com"
-            />
-            <View style={{ height: 12 }} />
-            <TextField
-              label="Password"
-              leftIcon="lock-closed-outline"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!show}
-              placeholder="Minimum 6 characters"
-              rightIcon={show ? 'eye-off-outline' : 'eye-outline'}
-              onRightIconPress={() => setShow((s) => !s)}
-            />
-
-            <View style={{ height: 16 }} />
-            <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>Role</Text>
-            <View style={styles.roleRow}>
-              <RoleToggleCard
-                title="I am a User"
-                subtitle="Vitals + Supervisor link"
-                icon="watch-outline"
-                selected={role === 'USER'}
-                onPress={() => setRole('USER')}
-              />
-              <View style={{ width: 12 }} />
-              <RoleToggleCard
-                title="I am a Supervisor"
-                subtitle="Monitor patients"
-                icon="medical-outline"
-                selected={role === 'SUPERVISOR'}
-                onPress={() => setRole('SUPERVISOR')}
-              />
-            </View>
-
-            <View style={{ height: 16 }} />
-            <GradientButton title="Sign up" onPress={onSubmit} disabled={!canSubmit} loading={loading} />
-          </GlassCard>
+    <Screen keyboard>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {/* ── Header ── */}
+        <View style={styles.header}>
+          <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: 4 }]}>
+            Create Account
+          </Text>
+          <Text style={[theme.typography.body, { color: theme.colors.textSecondary }]}>
+            Join VitalSync to monitor your health
+          </Text>
         </View>
 
-        <View style={styles.bottom}>
-          <Text style={[styles.bottomText, { color: theme.colors.textSecondary }]}>Already have an account?</Text>
-          <Pressable onPress={() => nav.navigate('Login')}>
-            <Text style={[styles.link, { color: theme.colors.accent }]}> Login</Text>
-          </Pressable>
+        {/* ── Role Selector ── */}
+        <View style={styles.roleRow}>
+          <RoleToggleCard
+            title="Patient"
+            subtitle="Track your vitals"
+            icon="body-outline"
+            selected={role === 'USER'}
+            onPress={() => setRole('USER')}
+          />
+          <View style={{ width: 12 }} />
+          <RoleToggleCard
+            title="Supervisor"
+            subtitle="Monitor patients"
+            icon="pulse-outline"
+            selected={role === 'SUPERVISOR'}
+            onPress={() => setRole('SUPERVISOR')}
+          />
         </View>
-      </View>
+
+        {/* ── Fields ── */}
+        {/* FIX: leftIcon and rightIcon now pass string names, not JSX elements */}
+        <View style={styles.fields}>
+          <TextField
+            label="Full Name"
+            value={name}
+            onChangeText={setName}
+            placeholder="Ahmad Ali"
+            leftIcon="person-outline"
+            autoCapitalize="words"
+          />
+          <TextField
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="ahmad@email.com"
+            leftIcon="mail-outline"
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+          <TextField
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Min. 6 characters"
+            leftIcon="lock-closed-outline"
+            secureTextEntry={!showPassword}
+            rightIcon={showPassword ? 'eye-off-outline' : 'eye-outline'}
+            onRightIconPress={() => setShowPassword((p) => !p)}
+          />
+        </View>
+
+        {/* ── Error ── */}
+        {!!error && (
+          <View style={[styles.errorBox, { backgroundColor: theme.colors.critical + '15', borderColor: theme.colors.critical + '40' }]}>
+            <Text style={[theme.typography.caption, { color: theme.colors.critical }]}>
+              {error}
+            </Text>
+          </View>
+        )}
+
+        {/* ── Submit ── */}
+        {/* FIX: label → title */}
+        <GradientButton
+          title="Create Account"
+          onPress={handleSignup}
+          loading={loading}
+          disabled={!canSubmit}
+          style={{ marginTop: 8 }}
+        />
+
+        {/* ── Email note ── */}
+        <Text style={[theme.typography.small, { color: theme.colors.textSecondary, textAlign: 'center', marginTop: 12 }]}>
+          We'll send a verification code to your email
+        </Text>
+
+        {/* ── Login link ── */}
+        <View style={styles.footer}>
+          <Text style={[theme.typography.body, { color: theme.colors.textSecondary }]}>
+            Already have an account?{' '}
+          </Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+            <Text style={[theme.typography.body, { color: theme.colors.accent, fontWeight: '700' }]}>
+              Sign In
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, minHeight: 780 },
-  cardWrap: { marginTop: -64, paddingHorizontal: 20 },
-  card: { padding: 18 },
-  cardTitle: { fontSize: 20, fontWeight: '900' },
-  cardSub: { marginTop: 6, fontSize: 13, fontWeight: '700' },
-  sectionTitle: { fontSize: 12, fontWeight: '800', marginBottom: 10 },
-  roleRow: { flexDirection: 'row' },
-  bottom: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    marginTop: 18,
-    paddingBottom: 10,
+  header: { marginBottom: 24 },
+  roleRow: { flexDirection: 'row', marginBottom: 20 },
+  fields: { gap: 4 },
+  errorBox: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 8,
+    marginBottom: 4,
   },
-  bottomText: { fontSize: 13, fontWeight: '700' },
-  link: { fontSize: 13, fontWeight: '900' },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+    paddingBottom: 32,
+  },
 });
-
