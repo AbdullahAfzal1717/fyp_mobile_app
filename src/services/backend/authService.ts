@@ -160,8 +160,12 @@ export const authService = {
    */
   async googleSignIn(
     idToken: string,
+    preferredRole: 'USER' | 'SUPERVISOR' = 'USER',
   ): Promise<{ token: string; user: AuthUser }> {
-    const { data } = await api.post<LoginResponse>('/auth/google', { idToken });
+    const { data } = await api.post<LoginResponse>('/auth/google', {
+      idToken,
+      preferredRole,
+    });
     const decoded = jwtDecode<JwtPayload>(data.token);
     const me = await this.me(data.token);
     return {

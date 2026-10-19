@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  FlatList,
   Pressable,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 
+import { Chip } from '../../components/Chip';
 import { GlassCard } from '../../components/GlassCard';
 import { GradientButton } from '../../components/GradientButton';
 import { Screen } from '../../components/Screen';
@@ -17,110 +17,154 @@ import type { ActivityState } from '../../services/backend/types';
 import { vitalsService } from '../../services/backend/vitalsService';
 import { useTheme } from '../../theme/AppThemeProvider';
 
-type FoundDevice = { id: string; name: string; signal: number };
+type StreamMode = 'safe' | 'warning' | 'critical';
 
+function buildSample(mode: StreamMode, activityState: ActivityState) {
+  if (mode === 'critical') {
+    return {
+      heartRate: activityState === 'STATIC' ? 128 : 172,
+      spo2: 89,
+      temperature: 39.5,
+      activityState,
+    };
+  }
+  if (mode === 'warning') {
+    return {
+      heartRate: activityState === 'STATIC' ? 112 : 145,
+      spo2: 94,
+      temperature: 37.6,
+      activityState,
+    };
+  }
+  return {
+    heartRate:
+      activityState === 'RUNNING'
+        ? 118 + Math.floor(Math.random() * 12)
+        : 68 + Math.floor(Math.random() * 12),
+    spo2: 97 + Math.floor(Math.random() * 3),
+    temperature: Number((36.6 + Math.random() * 0.4).toFixed(1)),
+    activityState,
+  };
+}
+
+/**
+ * Temporary phone-side "wearable node" until Wear OS app exists.
+ * Streams demo vitals to the same backend APIs a real watch will use.
+ */
 export function WatchConnectScreen() {
   const theme = useTheme();
   const navigation = useNavigation();
 
-  const [scanning, setScanning] = useState(true);
-  const [devices, setDevices] = useState<FoundDevice[]>([]);
-  const [connectedTo, setConnectedTo] = useState<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const [mode, setMode] = useState<StreamMode>('safe');
+  const [activity, setActivity] = useState<ActivityState>('STATIC');
+  const [lastHr, setLastHr] = useState<number | null>(null);
+  const [lastRisk, setLastRisk] = useState<string>('--');
+  const [queueSize, setQueueSize] = useState(0);
+  const [statusLine, setStatusLine] = useState(
+    'Demo stream — replaces fake Bluetooth until Wear OS is ready',
+  );
+  const [sent, setSent] = useState(0);
+
   const pulse = useRef(new Animated.Value(0)).current;
-  const ring = useRef(new Animated.Value(0)).current;
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const modeRef = useRef(mode);
+  const activityRef = useRef(activity);
+  modeRef.current = mode;
+  activityRef.current = activity;
 
   useEffect(() => {
     const loop = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(pulse, {
-            toValue: 1,
-            duration: 900,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulse, {
-            toValue: 0,
-            duration: 900,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.timing(ring, {
+      Animated.sequence([
+        Animated.timing(pulse, {
           toValue: 1,
-          duration: 1800,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
           useNativeDriver: true,
         }),
       ]),
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse, ring]);
+  }, [pulse]);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setDevices([
-        { id: 'w1', name: 'VitalSync Wear OS', signal: 82 },
-        { id: 'w2', name: 'Galaxy Watch Health', signal: 64 },
-      ]);
-      setScanning(false);
-    }, 2200);
-    return () => clearTimeout(t);
+    vitalsService.getQueueSize().then(setQueueSize).catch(() => undefined);
   }, []);
 
-  const ringScale = ring.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.35],
-  });
-  const ringOpacity = ring.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.35, 0],
-  });
-
-  async function connect(device: FoundDevice) {
-    setConnectedTo(device.name);
-    try {
-      const activityState: ActivityState = 'STATIC';
-      await vitalsService.upload({
-        heartRate: 76 + Math.floor(Math.random() * 8),
-        temperature: 36.8 + Math.random() * 0.4,
-        spo2: 96 + Math.floor(Math.random() * 3),
-        activityState,
-      });
-    } catch {
-      // still show connected UX if upload fails (network)
+  const stopStream = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
-  }
+    setStreaming(false);
+    setStatusLine('Stream stopped');
+  }, []);
+
+  const sendOne = useCallback(async () => {
+    const sample = buildSample(modeRef.current, activityRef.current);
+    const result = await vitalsService.upload(sample);
+    setLastHr(sample.heartRate);
+    setQueueSize(result.queueSize);
+    setSent(n => n + 1);
+
+    if (result.buffered) {
+      setLastRisk('BUFFERED');
+      setStatusLine(`Offline — queued locally (${result.queueSize} packets)`);
+    } else {
+      setLastRisk(result.vital?.riskLevel ?? 'SAFE');
+      setStatusLine(
+        `Uploaded · Risk ${result.vital?.riskLevel ?? 'SAFE'} · Score ${result.vital?.riskScore ?? 0}`,
+      );
+    }
+  }, []);
+
+  const startStream = useCallback(async () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setStreaming(true);
+    setStatusLine('Streaming demo vitals every 4s…');
+    await sendOne();
+    timerRef.current = setInterval(() => {
+      sendOne().catch(() => undefined);
+    }, 4000);
+  }, [sendOne]);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+  }, []);
 
   const subtitle = useMemo(() => {
-    if (connectedTo) return `Connected to ${connectedTo}`;
-    if (scanning) return 'Searching for devices…';
-    return 'Tap a device to pair';
-  }, [connectedTo, scanning]);
+    if (streaming) return 'Demo wearable node active';
+    return 'Phone stands in for Wear OS until the watch app ships';
+  }, [streaming]);
 
   return (
     <Screen scroll>
       <View style={styles.top}>
         <Pressable
           hitSlop={12}
-          onPress={() => navigation.goBack()}
+          onPress={() => {
+            stopStream();
+            navigation.goBack();
+          }}
           style={styles.back}
         >
           <Ionicons name="arrow-back" size={22} color={theme.colors.text} />
         </Pressable>
-        <Text style={[styles.title, { color: theme.colors.text }]}>Watch</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]}>
+          Demo Stream
+        </Text>
         <View style={{ width: 30 }} />
       </View>
 
       <View style={styles.scanArea}>
-        <Animated.View
-          style={[
-            styles.ringOuter,
-            { transform: [{ scale: ringScale }], opacity: ringOpacity },
-          ]}
-        >
-          <View
-            style={[styles.ringInner, { borderColor: theme.colors.accent }]}
-          />
-        </Animated.View>
         <Animated.View
           style={[
             styles.bubble,
@@ -129,14 +173,21 @@ export function WatchConnectScreen() {
                 {
                   scale: pulse.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [1, 1.05],
+                    outputRange: [1, streaming ? 1.08 : 1.03],
                   }),
                 },
               ],
+              backgroundColor: streaming
+                ? 'rgba(37,99,235,0.12)'
+                : '#FFFFFF',
             },
           ]}
         >
-          <Ionicons name="bluetooth" size={34} color={theme.colors.accent} />
+          <Ionicons
+            name={streaming ? 'pulse' : 'watch-outline'}
+            size={34}
+            color={theme.colors.accent}
+          />
         </Animated.View>
       </View>
 
@@ -144,80 +195,104 @@ export function WatchConnectScreen() {
         {subtitle}
       </Text>
 
-      {connectedTo ? (
-        <GlassCard style={styles.connected}>
-          <Ionicons
-            name="checkmark-circle"
-            size={28}
-            color={theme.colors.safe}
-          />
-          <Text style={[styles.connectedText, { color: theme.colors.text }]}>
-            Connected
+      <GlassCard style={styles.card}>
+        <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+          Scenario
+        </Text>
+        <View style={styles.row}>
+          {(['safe', 'warning', 'critical'] as StreamMode[]).map(m => (
+            <Chip
+              key={m}
+              label={m.toUpperCase()}
+              selected={mode === m}
+              onPress={() => setMode(m)}
+            />
+          ))}
+        </View>
+
+        <View style={{ height: 14 }} />
+        <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+          Activity (contextual AI)
+        </Text>
+        <View style={styles.row}>
+          {(['STATIC', 'RUNNING'] as ActivityState[]).map(a => (
+            <Chip
+              key={a}
+              label={a}
+              selected={activity === a}
+              onPress={() => setActivity(a)}
+            />
+          ))}
+        </View>
+      </GlassCard>
+
+      <View style={{ height: 12 }} />
+
+      <GlassCard style={styles.stats}>
+        <View style={styles.statCol}>
+          <Text style={[styles.statVal, { color: theme.colors.text }]}>
+            {lastHr ?? '--'}
           </Text>
-          <Text
-            style={[styles.connectedSub, { color: theme.colors.textSecondary }]}
-          >
-            A sample vital was synced to your supervisor pipeline.
+          <Text style={[styles.statLbl, { color: theme.colors.textSecondary }]}>
+            Last HR
           </Text>
-          <View style={{ height: 12 }} />
-          <GradientButton title="Done" onPress={() => navigation.goBack()} />
-        </GlassCard>
+        </View>
+        <View style={styles.statCol}>
+          <Text style={[styles.statVal, { color: theme.colors.text }]}>
+            {lastRisk}
+          </Text>
+          <Text style={[styles.statLbl, { color: theme.colors.textSecondary }]}>
+            Risk
+          </Text>
+        </View>
+        <View style={styles.statCol}>
+          <Text style={[styles.statVal, { color: theme.colors.text }]}>
+            {queueSize}
+          </Text>
+          <Text style={[styles.statLbl, { color: theme.colors.textSecondary }]}>
+            Offline queue
+          </Text>
+        </View>
+        <View style={styles.statCol}>
+          <Text style={[styles.statVal, { color: theme.colors.text }]}>
+            {sent}
+          </Text>
+          <Text style={[styles.statLbl, { color: theme.colors.textSecondary }]}>
+            Sent
+          </Text>
+        </View>
+      </GlassCard>
+
+      <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
+        {statusLine}
+      </Text>
+
+      <View style={{ height: 16 }} />
+      {streaming ? (
+        <GradientButton title="Stop stream" onPress={stopStream} />
       ) : (
-        <>
-          <FlatList
-            data={devices}
-            keyExtractor={d => d.id}
-            scrollEnabled={false}
-            ListEmptyComponent={
-              scanning ? null : (
-                <Text
-                  style={[styles.none, { color: theme.colors.textSecondary }]}
-                >
-                  No devices found.
-                </Text>
-              )
-            }
-            renderItem={({ item }) => (
-              <Pressable onPress={() => connect(item)}>
-                <GlassCard style={styles.device}>
-                  <View
-                    style={[
-                      styles.deviceIcon,
-                      { backgroundColor: 'rgba(37,99,235,0.10)' },
-                    ]}
-                  >
-                    <Ionicons
-                      name="watch-outline"
-                      size={22}
-                      color={theme.colors.accent}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={[styles.deviceName, { color: theme.colors.text }]}
-                    >
-                      {item.name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.signal,
-                        { color: theme.colors.textSecondary },
-                      ]}
-                    >
-                      Signal {item.signal}%
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={20}
-                    color={theme.colors.textSecondary}
-                  />
-                </GlassCard>
-              </Pressable>
-            )}
-          />
-        </>
+        <GradientButton title="Start demo vitals stream" onPress={startStream} />
       )}
+
+      <View style={{ height: 10 }} />
+      <GradientButton
+        title="Flush offline queue now"
+        onPress={async () => {
+          const r = await vitalsService.flushQueue();
+          setQueueSize(r.remaining);
+          setStatusLine(
+            r.synced
+              ? `Synced ${r.synced} buffered packet(s)`
+              : r.remaining
+                ? `Still offline (${r.remaining} waiting)`
+                : 'Queue empty',
+          );
+        }}
+      />
+
+      <Text style={[styles.footnote, { color: theme.colors.textSecondary }]}>
+        Real Wear OS sensor upload will use the same /vitals/upload API.
+      </Text>
     </Screen>
   );
 }
@@ -232,29 +307,15 @@ const styles = StyleSheet.create({
   back: { padding: 4 },
   title: { fontSize: 18, fontWeight: '900' },
   scanArea: {
-    height: 220,
+    height: 160,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 10,
-  },
-  ringOuter: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ringInner: {
-    width: 200,
-    height: 200,
-    borderRadius: 999,
-    borderWidth: 2,
+    marginTop: 8,
   },
   bubble: {
     width: 92,
     height: 92,
     borderRadius: 999,
-    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#2563EB',
@@ -265,34 +326,41 @@ const styles = StyleSheet.create({
   },
   status: {
     textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 16,
-  },
-  device: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    marginBottom: 12,
-  },
-  deviceIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  deviceName: { fontSize: 15, fontWeight: '900' },
-  signal: { marginTop: 4, fontSize: 12, fontWeight: '800' },
-  none: { textAlign: 'center', marginTop: 12, fontSize: 13, fontWeight: '800' },
-  connected: { alignItems: 'center', padding: 18, marginTop: 8 },
-  connectedText: { marginTop: 10, fontSize: 18, fontWeight: '900' },
-  connectedSub: {
-    marginTop: 8,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
+    marginBottom: 14,
+    paddingHorizontal: 12,
+  },
+  card: { padding: 16 },
+  label: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+    marginBottom: 8,
+  },
+  row: { flexDirection: 'row', flexWrap: 'wrap' },
+  stats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 10,
+  },
+  statCol: { flex: 1, alignItems: 'center' },
+  statVal: { fontSize: 16, fontWeight: '900' },
+  statLbl: { marginTop: 4, fontSize: 10, fontWeight: '800' },
+  hint: {
+    marginTop: 12,
     textAlign: 'center',
-    lineHeight: 18,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+  },
+  footnote: {
+    marginTop: 16,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 16,
+    paddingHorizontal: 8,
   },
 });

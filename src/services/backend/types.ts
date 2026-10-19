@@ -44,7 +44,10 @@ export type Connection = {
 
 export type PatientLite = {
   _id: string;
+  /** Same as _id — returned by /connections/my-users for mobile helpers */
+  id?: string;
   name: string;
   email: string;
+  avatarUrl?: string | null;
 };
 

@@ -7,6 +7,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 
 import { authService } from '../../services/backend/authService';
 import {
@@ -19,6 +20,7 @@ import {
   connectSocket,
   disconnectSocket,
 } from '../../services/realtime/socket';
+import { flushVitalsQueue } from '../../services/offline/syncManager';
 import type { AuthState, AuthUser, Role } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +61,10 @@ type AuthContextValue = {
   }) => Promise<void>;
 
   // NEW: sign in with Google
-  googleSignIn: (idToken: string) => Promise<void>;
+  googleSignIn: (
+    idToken: string,
+    preferredRole?: Role,
+  ) => Promise<void>;
 
   // NEW: upload profile picture
   uploadAvatar: (localUri: string) => Promise<void>;
@@ -120,9 +125,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       connectSocket(token);
       setState({ status: 'signedIn', user });
       await persist(user);
+      // Smart-Sync: push any offline-buffered vitals after login
+      flushVitalsQueue().catch(() => undefined);
     },
     [persist],
   );
+
+  // When app returns to foreground, retry offline vitals queue
+  useEffect(() => {
+    if (state.status !== 'signedIn') return undefined;
+    const sub = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        flushVitalsQueue().catch(() => undefined);
+      }
+    });
+    const interval = setInterval(() => {
+      flushVitalsQueue().catch(() => undefined);
+    }, 30000);
+    return () => {
+      sub.remove();
+      clearInterval(interval);
+    };
+  }, [state.status]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // EXISTING: Email + Password Login
@@ -214,8 +238,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Sends it to YOUR backend which verifies it and returns your app's JWT.
   // ─────────────────────────────────────────────────────────────────────────
   const googleSignIn = useCallback(
-    async (idToken: string) => {
-      const { token, user } = await authService.googleSignIn(idToken);
+    async (idToken: string, preferredRole: Role = 'USER') => {
+      const { token, user } = await authService.googleSignIn(
+        idToken,
+        preferredRole,
+      );
       await finalizeLogin(token, user);
     },
     [finalizeLogin],

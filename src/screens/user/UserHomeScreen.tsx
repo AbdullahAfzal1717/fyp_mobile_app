@@ -53,7 +53,7 @@ export function UserHomeScreen() {
     const s = getSocket();
     const onVitals = (payload: { userId: string; vital: Vital }) => {
       if (!alive) return;
-      if (payload.userId !== user.id) return;
+      if (String(payload.userId) !== String(user.id)) return;
       setLatest(payload.vital);
     };
     s?.on('vitals:update', onVitals);
@@ -143,9 +143,12 @@ export function UserHomeScreen() {
       <View style={{ height: 16 }} />
       <Pressable onPress={() => navigation.navigate('WatchConnect')}>
         <GlassCard style={styles.statusBar} intensity={14}>
-          <Ionicons name="watch-outline" size={18} color={theme.colors.accent} style={{ marginRight: 10 }} />
+          <Ionicons name="pulse" size={18} color={theme.colors.accent} style={{ marginRight: 10 }} />
           <Text style={[styles.statusText, { color: theme.colors.textSecondary, flex: 1 }]}>
-            Watch & Bluetooth: <Text style={{ color: theme.colors.safe, fontWeight: '900' }}>Tap to connect</Text>
+            Demo vitals stream:{' '}
+            <Text style={{ color: theme.colors.safe, fontWeight: '900' }}>
+              Tap to start (until Wear OS)
+            </Text>
           </Text>
           <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
         </GlassCard>
