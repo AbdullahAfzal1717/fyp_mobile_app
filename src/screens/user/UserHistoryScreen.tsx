@@ -1,22 +1,31 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Dimensions, FlatList, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  Dimensions,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { Chip } from '../../components/Chip';
 import { GlassCard } from '../../components/GlassCard';
 import { Screen } from '../../components/Screen';
 import { vitalsService } from '../../services/backend/vitalsService';
 import type { Vital } from '../../services/backend/types';
+import { getApiErrorMessage } from '../../services/apiClient';
+import { getSocket } from '../../services/realtime/socket';
 import { useAuth } from '../../state/auth/AuthProvider';
 import { useTheme } from '../../theme/AppThemeProvider';
 import { formatTimeAgo } from '../../utils/format';
 
 const screenWidth = Dimensions.get('window').width;
+const PAGE_SIZE = 8;
 
 type Range = 'Today' | 'Week' | 'Month';
 type Metric = 'HR' | 'SpO2' | 'Temp';
 
-// Clamp values to realistic ranges per metric
 const CLAMP: Record<Metric, [number, number]> = {
   HR: [20, 250],
   SpO2: [50, 100],
@@ -25,8 +34,14 @@ const CLAMP: Record<Metric, [number, number]> = {
 
 function sanitize(v: unknown): number | null {
   const n = Number(v);
-  if (v == null || isNaN(n) || !isFinite(n)) return null;
+  if (v == null || Number.isNaN(n) || !Number.isFinite(n)) return null;
   return n;
+}
+
+function rangeWindowMs(range: Range) {
+  if (range === 'Today') return 24 * 3600e3;
+  if (range === 'Week') return 7 * 24 * 3600e3;
+  return 30 * 24 * 3600e3;
 }
 
 export function UserHistoryScreen() {
@@ -38,94 +53,89 @@ export function UserHistoryScreen() {
   const [metric, setMetric] = useState<Metric>('HR');
   const [items, setItems] = useState<Vital[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      try {
-        const hist = await vitalsService.getHistory(user.id);
-        if (!alive) return;
-        // Log raw data so we can verify what's coming from the server
-        console.log('[History] total records:', hist.length);
-        if (hist.length > 0) {
-          console.log('[History] sample record:', JSON.stringify(hist[0]));
-          console.log('[History] first timestamp:', hist[0].timestamp);
-          console.log(
-            '[History] last timestamp:',
-            hist[hist.length - 1].timestamp,
-          );
-        }
-        setItems(hist);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const hist = await vitalsService.getHistory(user.id);
+      setItems(Array.isArray(hist) ? hist : []);
+    } catch (e) {
+      setItems([]);
+      setError(getApiErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   }, [user.id]);
 
-  // Filter by time range — fall back to ALL data if nothing matches the window
-  const filtered = useMemo(() => {
-    if (!items.length) return [];
+  useFocusEffect(
+    useCallback(() => {
+      load();
+      const s = getSocket();
+      const onVitals = (payload: { userId: string; vital: Vital }) => {
+        if (String(payload.userId) !== String(user.id)) return;
+        setItems(prev => {
+          const next = [
+            payload.vital,
+            ...prev.filter(v => v._id !== payload.vital._id),
+          ];
+          return next.slice(0, 200);
+        });
+      };
+      s?.on('vitals:update', onVitals);
+      return () => s?.off('vitals:update', onVitals);
+    }, [load, user.id]),
+  );
 
+  // Reset pagination when range changes
+  React.useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [range, metric]);
+
+  // Newest-first list filtered by selected time range (no silent fallback)
+  const filteredNewestFirst = useMemo(() => {
+    const windowMs = rangeWindowMs(range);
     const now = Date.now();
-    const windowMs =
-      range === 'Today'
-        ? 24 * 3600e3
-        : range === 'Week'
-        ? 7 * 24 * 3600e3
-        : 30 * 24 * 3600e3;
-
-    const inWindow = items.filter(v => {
-      const ts = new Date(v.timestamp).getTime();
-      return !isNaN(ts) && now - ts <= windowMs;
-    });
-
-    console.log(
-      `[History] range=${range} matched=${inWindow.length}/${items.length}`,
-    );
-
-    // If nothing falls in the window (e.g. all data is old/test data), show all
-    const result = inWindow.length > 0 ? inWindow : items;
-    return result.slice().reverse();
+    return items
+      .filter(v => {
+        const ts = new Date(v.timestamp).getTime();
+        return !Number.isNaN(ts) && now - ts <= windowMs;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+      );
   }, [items, range]);
 
-  // Build safe chart data
+  // Oldest→newest for chart drawing
+  const filteredChronological = useMemo(
+    () => [...filteredNewestFirst].reverse(),
+    [filteredNewestFirst],
+  );
+
   const safeChartData = useMemo(() => {
     const key =
-      metric === 'HR'
-        ? 'heartRate'
-        : metric === 'SpO2'
-        ? 'spo2'
-        : 'temperature';
-
+      metric === 'HR' ? 'heartRate' : metric === 'SpO2' ? 'spo2' : 'temperature';
     const [minVal, maxVal] = CLAMP[metric];
 
-    const points = filtered
+    const points = filteredChronological
       .map(v => sanitize((v as Record<string, unknown>)[key]))
       .filter((v): v is number => v !== null)
       .map(v => Math.min(Math.max(v, minVal), maxVal));
 
-    console.log(`[History] metric=${metric} valid points=${points.length}`);
-    if (points.length > 0) {
-      console.log('[History] sample values:', points.slice(0, 5));
-    }
-
     if (points.length < 2) return null;
 
-    // Limit to last 30 points to keep chart readable
     const trimmed = points.slice(-30);
-
     const labels = trimmed.map((_, i) => {
       if (trimmed.length <= 6) return `${i + 1}`;
       if (i === 0 || i === trimmed.length - 1) return `${i + 1}`;
       return i % 5 === 0 ? `${i + 1}` : '';
     });
 
-    return { data: trimmed, labels };
-  }, [filtered, metric]);
+    return { data: trimmed, labels, pointCount: points.length };
+  }, [filteredChronological, metric]);
 
   const stats = useMemo(() => {
     if (!safeChartData) return { avg: 0, min: 0, max: 0 };
@@ -139,11 +149,22 @@ export function UserHistoryScreen() {
   }, [safeChartData]);
 
   const unit = metric === 'HR' ? 'bpm' : metric === 'SpO2' ? '%' : '°C';
+  const visibleReadings = filteredNewestFirst.slice(0, visibleCount);
+  const hasMore = visibleCount < filteredNewestFirst.length;
 
   return (
-    <Screen scroll>
+    <Screen scroll refreshing={loading} onRefresh={load}>
       <Text style={[styles.title, { color: theme.colors.text }]}>
         Health History
+      </Text>
+      <Text
+        style={{
+          color: theme.colors.textSecondary,
+          fontSize: 12,
+          fontWeight: '700',
+          marginTop: 4,
+        }}>
+        Signed in as {user.email}
       </Text>
 
       <View style={styles.chipsRow}>
@@ -168,21 +189,33 @@ export function UserHistoryScreen() {
         ))}
       </View>
 
+      {!!error && (
+        <GlassCard style={styles.banner}>
+          <Text style={{ color: theme.colors.critical, fontWeight: '800' }}>
+            {error}
+          </Text>
+        </GlassCard>
+      )}
+
       <GlassCard style={styles.chartCard}>
         <Text style={[styles.cardLabel, { color: theme.colors.textSecondary }]}>
-          {loading ? 'Loading…' : `${metric} Trend`}
+          {loading ? 'Loading…' : `${metric} · ${range}`}
         </Text>
-
-        {/* Debug line — remove once chart is confirmed working */}
         <Text
           style={{
             color: theme.colors.textSecondary,
-            fontSize: 10,
-            marginTop: 2,
-          }}
-        >
-          {items.length} records • {filtered.length} in range •{' '}
-          {safeChartData?.data.length ?? 0} chart points
+            fontSize: 11,
+            fontWeight: '700',
+            marginTop: 4,
+          }}>
+          {filteredNewestFirst.length} reading
+          {filteredNewestFirst.length === 1 ? '' : 's'} in {range.toLowerCase()}
+          {items.length !== filteredNewestFirst.length
+            ? ` · ${items.length} total stored`
+            : ''}
+          {safeChartData
+            ? ` · chart uses last ${safeChartData.data.length}`
+            : ''}
         </Text>
 
         {safeChartData ? (
@@ -191,10 +224,10 @@ export function UserHistoryScreen() {
               labels: safeChartData.labels,
               datasets: [{ data: safeChartData.data }],
             }}
-            width={screenWidth - 80}
+            width={Math.min(screenWidth - 80, 360)}
             height={200}
             withDots={safeChartData.data.length <= 10}
-            withInnerLines={true}
+            withInnerLines
             withOuterLines={false}
             bezier
             chartConfig={{
@@ -219,13 +252,13 @@ export function UserHistoryScreen() {
                 color: theme.colors.textSecondary,
                 fontWeight: '700',
                 textAlign: 'center',
-              }}
-            >
+                lineHeight: 18,
+              }}>
               {loading
                 ? 'Loading data…'
-                : items.length === 0
-                ? 'No health records found'
-                : `No valid ${metric} readings available`}
+                : filteredNewestFirst.length === 0
+                  ? `No readings in ${range.toLowerCase()}. Try Week/Month or start Demo Stream.`
+                  : `Need at least 2 ${metric} readings in this range for a chart`}
             </Text>
           </View>
         )}
@@ -256,29 +289,56 @@ export function UserHistoryScreen() {
       </GlassCard>
 
       <Text style={[styles.section, { color: theme.colors.textSecondary }]}>
-        Recent readings
+        Recent readings ({range})
       </Text>
-      <FlatList
-        data={items.slice(0, 20)}
-        keyExtractor={v => v._id}
-        scrollEnabled={false}
-        renderItem={({ item }) => (
-          <View style={[styles.rowItem, { borderColor: theme.colors.border }]}>
+
+      {visibleReadings.length === 0 ? (
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            fontWeight: '700',
+            marginTop: 8,
+          }}>
+          No readings in this time range.
+        </Text>
+      ) : (
+        visibleReadings.map(item => (
+          <View
+            key={String(item._id)}
+            style={[styles.rowItem, { borderColor: theme.colors.border }]}>
             <Text style={[styles.rowPrimary, { color: theme.colors.text }]}>
-              HR {item.heartRate ?? '--'} • SpO₂ {item.spo2 ?? '--'} • Temp{' '}
+              HR {item.heartRate ?? '--'} · SpO₂ {item.spo2 ?? '--'} · Temp{' '}
               {item.temperature ?? '--'}
             </Text>
             <Text
               style={[
                 styles.rowSecondary,
                 { color: theme.colors.textSecondary },
-              ]}
-            >
-              {formatTimeAgo(item.timestamp)}
+              ]}>
+              {formatTimeAgo(item.timestamp)} · {item.activityState ?? '—'} ·{' '}
+              {item.riskLevel ?? 'SAFE'}
             </Text>
           </View>
-        )}
-      />
+        ))
+      )}
+
+      {hasMore && (
+        <Pressable
+          onPress={() => setVisibleCount(c => c + PAGE_SIZE)}
+          style={[styles.moreBtn, { borderColor: theme.colors.border }]}>
+          <Text style={{ color: theme.colors.accent, fontWeight: '900' }}>
+            Show more ({filteredNewestFirst.length - visibleCount} left)
+          </Text>
+        </Pressable>
+      )}
+
+      {!hasMore && filteredNewestFirst.length > PAGE_SIZE && (
+        <Pressable onPress={() => setVisibleCount(PAGE_SIZE)} style={styles.moreBtn}>
+          <Text style={{ color: theme.colors.textSecondary, fontWeight: '800' }}>
+            Show less
+          </Text>
+        </Pressable>
+      )}
     </Screen>
   );
 }
@@ -310,12 +370,13 @@ function Stat({
 
 const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '900', marginTop: 6 },
-  chipsRow: { flexDirection: 'row', marginTop: 12 },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 },
+  banner: { marginTop: 12, padding: 12 },
   chartCard: { marginTop: 12, padding: 14 },
   cardLabel: { fontSize: 12, fontWeight: '900', letterSpacing: 0.2 },
   chart: { borderRadius: 12, marginTop: 10, marginLeft: -10 },
   noData: {
-    height: 200,
+    height: 180,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
@@ -338,4 +399,12 @@ const styles = StyleSheet.create({
   rowItem: { paddingVertical: 12, borderBottomWidth: 1 },
   rowPrimary: { fontSize: 13, fontWeight: '800' },
   rowSecondary: { marginTop: 6, fontSize: 12, fontWeight: '700' },
+  moreBtn: {
+    marginTop: 12,
+    marginBottom: 8,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
 });

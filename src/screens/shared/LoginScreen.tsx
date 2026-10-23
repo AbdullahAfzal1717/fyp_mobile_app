@@ -17,6 +17,7 @@ import type { AuthStackParamList } from '../../navigation/types';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
 import { GradientButton } from '../../components/GradientButton';
+import { env } from '../../config/env';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList>;
 
@@ -102,6 +103,13 @@ export function LoginScreen() {
         </Text>
         <Text style={[theme.typography.body, { color: theme.colors.textSecondary }]}>
           Sign in to monitor vitals or supervise your team
+        </Text>
+        <Text
+          style={[
+            theme.typography.caption,
+            { color: theme.colors.textSecondary, marginTop: 8 },
+          ]}>
+          Demo: patient1@test.com / 123456 · API {env.apiBaseUrl.replace('http://', '')}
         </Text>
       </View>
 

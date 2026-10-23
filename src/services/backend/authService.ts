@@ -4,12 +4,52 @@ import { jwtDecode } from 'jwt-decode';
 import { api } from '../apiClient';
 import type { AuthUser, Role } from '../../state/auth/types';
 
-type JwtPayload = { id: string; role: Role; iat: number; exp: number };
+type JwtPayload = { id: string | { toString(): string }; role: Role; iat: number; exp: number };
 
 type LoginResponse = {
   token: string;
   userData: { role: Role; name: string; supervisorCode?: string | null };
 };
+
+type MeResponse = {
+  id?: string;
+  _id?: string;
+  name: string;
+  email: string;
+  role: Role;
+  supervisorCode?: string | null;
+  avatarUrl?: string | null;
+};
+
+function normalizeId(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && 'toString' in value) {
+    return String((value as { toString(): string }).toString());
+  }
+  return String(value);
+}
+
+function buildAuthUser(
+  token: string,
+  me: MeResponse,
+  fallback?: Partial<AuthUser>,
+): AuthUser {
+  const decoded = jwtDecode<JwtPayload>(token);
+  const id =
+    normalizeId(decoded.id) ||
+    normalizeId(me.id) ||
+    normalizeId(me._id) ||
+    normalizeId(fallback?.id);
+  return {
+    id,
+    role: (decoded.role || me.role || fallback?.role || 'USER') as Role,
+    name: me.name ?? fallback?.name ?? '',
+    email: (me.email ?? fallback?.email ?? '').toLowerCase(),
+    supervisorCode: me.supervisorCode ?? fallback?.supervisorCode ?? null,
+    avatarUrl: me.avatarUrl ?? fallback?.avatarUrl ?? null,
+  };
+}
 
 type SignupResponse = {
   message: string;
@@ -31,19 +71,15 @@ export const authService = {
     password: string;
   }): Promise<{ token: string; user: AuthUser }> {
     const { data } = await api.post<LoginResponse>('/auth/login', params);
-    const decoded = jwtDecode<JwtPayload>(data.token);
     const me = await this.me(data.token);
     return {
       token: data.token,
-      user: {
-        id: decoded.id,
-        role: decoded.role,
-        name: me.name ?? data.userData.name,
-        email: me.email ?? params.email.trim().toLowerCase(),
-        supervisorCode:
-          me.supervisorCode ?? data.userData.supervisorCode ?? null,
-        avatarUrl: me.avatarUrl ?? null, // NEW: profile image
-      },
+      user: buildAuthUser(data.token, me, {
+        name: data.userData.name,
+        email: params.email.trim().toLowerCase(),
+        role: data.userData.role,
+        supervisorCode: data.userData.supervisorCode ?? null,
+      }),
     };
   },
 
@@ -81,19 +117,10 @@ export const authService = {
       '/auth/verify-email',
       params,
     );
-    // After verification, backend should return token so user is immediately logged in
-    const decoded = jwtDecode<JwtPayload>(data.token);
     const me = await this.me(data.token);
     return {
       token: data.token,
-      user: {
-        id: decoded.id,
-        role: decoded.role,
-        name: me.name,
-        email: me.email,
-        supervisorCode: me.supervisorCode ?? null,
-        avatarUrl: me.avatarUrl ?? null,
-      },
+      user: buildAuthUser(data.token, me),
     };
   },
 
@@ -166,32 +193,27 @@ export const authService = {
       idToken,
       preferredRole,
     });
-    const decoded = jwtDecode<JwtPayload>(data.token);
     const me = await this.me(data.token);
     return {
       token: data.token,
-      user: {
-        id: decoded.id,
-        role: decoded.role,
-        name: me.name,
-        email: me.email,
-        supervisorCode: me.supervisorCode ?? null,
-        avatarUrl: me.avatarUrl ?? null,
-      },
+      user: buildAuthUser(data.token, me),
     };
+  },
+
+  /** Rebuild AuthUser from a stored JWT (fixes stale AsyncStorage ids). */
+  async hydrateFromToken(token: string): Promise<AuthUser> {
+    const me = await this.me(token);
+    return buildAuthUser(token, me);
   },
 
   // ─────────────────────────────────────────────────────────────
   // EXISTING: Get current user profile
   // ─────────────────────────────────────────────────────────────
-  async me(tokenOverride?: string) {
+  async me(tokenOverride?: string): Promise<MeResponse> {
     const headers = tokenOverride
       ? { Authorization: `Bearer ${tokenOverride}` }
       : undefined;
-    const { data } = await api.get<AuthUser & { password?: never }>(
-      '/auth/me',
-      { headers },
-    );
+    const { data } = await api.get<MeResponse>('/auth/me', { headers });
     return data;
   },
 

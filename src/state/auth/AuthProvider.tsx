@@ -15,7 +15,7 @@ import {
   setAuthToken,
   clearAuthToken,
 } from '../../services/authToken';
-import { getJson, setJson, remove, storageKeys } from '../../services/storage';
+import { setJson, remove, storageKeys } from '../../services/storage';
 import {
   connectSocket,
   disconnectSocket,
@@ -86,24 +86,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user: null,
   });
 
-  // ── On app boot: check if user was already logged in ──────────────────────
+  // ── On app boot: restore session, but ALWAYS refresh identity from server ──
   useEffect(() => {
     let alive = true;
     (async () => {
-      const saved = await getJson<{ user: AuthUser }>(storageKeys.auth);
       const token = await getAuthToken();
 
       if (!alive) return;
 
-      if (saved?.user && token) {
-        // Both exist — auto login
-        connectSocket(token);
-        setState({ status: 'signedIn', user: saved.user });
-      } else {
-        // Inconsistent or no data — go to login
-        await clearAuthToken();
+      if (!token) {
         await remove(storageKeys.auth);
         setState({ status: 'signedOut', user: null });
+        return;
+      }
+
+      try {
+        // Do not trust stale AsyncStorage user.id — rebuild from JWT + /auth/me
+        const user = await authService.hydrateFromToken(token);
+        if (!alive) return;
+        if (!user.id) throw new Error('Invalid session user id');
+        connectSocket(token);
+        setState({ status: 'signedIn', user });
+        await setJson(storageKeys.auth, { user });
+      } catch {
+        await clearAuthToken();
+        await remove(storageKeys.auth);
+        if (alive) setState({ status: 'signedOut', user: null });
       }
     })();
     return () => {

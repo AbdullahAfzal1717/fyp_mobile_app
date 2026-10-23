@@ -1,10 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  FlatList,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { Chip } from '../../components/Chip';
 import { GlassCard } from '../../components/GlassCard';
 import { RiskBadge } from '../../components/RiskBadge';
+import { AlertDetailModal } from '../../components/AlertDetailModal';
 import { Screen } from '../../components/Screen';
 import type { Alert as AlertRow } from '../../services/backend/types';
 import type { PatientLite } from '../../services/backend/types';
@@ -23,34 +32,35 @@ function pid(p: PatientLite) {
 export function SupervisorAlertsScreen() {
   const theme = useTheme();
   const [patients, setPatients] = useState<PatientLite[]>([]);
-  const [alerts, setAlerts] = useState<Array<AlertRow & { patientName?: string }>>([]);
+  const [alerts, setAlerts] = useState<
+    Array<AlertRow & { patientName?: string }>
+  >([]);
   const [userFilter, setUserFilter] = useState<string | 'all'>('all');
   const [severity, setSeverity] = useState<SeverityFilter>('All');
   const [refreshing, setRefreshing] = useState(false);
+  const [selected, setSelected] = useState<
+    (AlertRow & { patientName?: string }) | null
+  >(null);
 
   const load = useCallback(async () => {
     const list = await connectionsService.myUsers();
     setPatients(list);
     const ids = list.map(pid);
     const merged = await alertsService.listForPatients(ids);
-    const nameById = new Map(list.map((u) => [pid(u), u.name ?? 'Patient']));
+    const nameById = new Map(list.map(u => [pid(u), u.name ?? 'Patient']));
     setAlerts(
-      merged.map((a) => ({
+      merged.map(a => ({
         ...a,
         patientName: nameById.get(String(a.userId)),
       })),
     );
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        await load();
-      } catch {
-        // ignore
-      }
-    })();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      load().catch(() => undefined);
+    }, [load]),
+  );
 
   const patientIds = useMemo(() => new Set(patients.map(pid)), [patients]);
 
@@ -59,8 +69,11 @@ export function SupervisorAlertsScreen() {
     const onAlert = (a: AlertRow) => {
       const uid = String(a.userId);
       if (!patientIds.has(uid)) return;
-      const name = patients.find((p) => pid(p) === uid)?.name;
-      setAlerts((prev) => [{ ...a, patientName: name }, ...prev.filter((x) => x._id !== a._id)]);
+      const name = patients.find(p => pid(p) === uid)?.name;
+      setAlerts(prev => [
+        { ...a, patientName: name },
+        ...prev.filter(x => x._id !== a._id),
+      ]);
     };
     s?.on('alert:triggered', onAlert);
     return () => s?.off('alert:triggered', onAlert);
@@ -77,20 +90,62 @@ export function SupervisorAlertsScreen() {
 
   const filtered = useMemo(() => {
     let list = alerts;
-    if (userFilter !== 'all') list = list.filter((a) => String(a.userId) === userFilter);
-    if (severity === 'Critical') list = list.filter((a) => a.riskLevel === 'CRITICAL');
-    if (severity === 'Caution') list = list.filter((a) => a.riskLevel === 'WARNING');
+    if (userFilter !== 'all') {
+      list = list.filter(a => String(a.userId) === userFilter);
+    }
+    if (severity === 'Critical') {
+      list = list.filter(a => a.riskLevel === 'CRITICAL');
+    }
+    if (severity === 'Caution') {
+      list = list.filter(a => a.riskLevel === 'WARNING');
+    }
     return list;
   }, [alerts, severity, userFilter]);
 
+  async function openAlert(item: AlertRow & { patientName?: string }) {
+    setSelected(item);
+    if (item.isRead) return;
+    try {
+      const updated = await alertsService.markRead(item._id);
+      const withName = { ...updated, patientName: item.patientName };
+      setAlerts(prev =>
+        prev.map(a => (a._id === updated._id ? withName : a)),
+      );
+      setSelected(withName);
+    } catch {
+      // keep modal open
+    }
+  }
+
   return (
     <Screen scroll refreshing={refreshing} onRefresh={onRefresh}>
-      <Text style={[styles.title, { color: theme.colors.text }]}>Alerts log</Text>
+      <Text style={[styles.title, { color: theme.colors.text }]}>
+        Alerts log
+      </Text>
+      <Text
+        style={{
+          color: theme.colors.textSecondary,
+          fontSize: 12,
+          fontWeight: '700',
+          marginTop: 4,
+        }}>
+        {filtered.length} shown
+        {alerts.length !== filtered.length ? ` · ${alerts.length} total` : ''}
+      </Text>
 
-      <Text style={[styles.section, { color: theme.colors.textSecondary }]}>Patient</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.userChips}>
-        <Chip label="All Users" selected={userFilter === 'all'} onPress={() => setUserFilter('all')} />
-        {patients.map((p) => {
+      <Text style={[styles.section, { color: theme.colors.textSecondary }]}>
+        Patient
+      </Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.userChips}>
+        <Chip
+          label="All Users"
+          selected={userFilter === 'all'}
+          onPress={() => setUserFilter('all')}
+        />
+        {patients.map(p => {
           const id = pid(p);
           return (
             <Chip
@@ -104,71 +159,143 @@ export function SupervisorAlertsScreen() {
         })}
       </ScrollView>
 
-      <Text style={[styles.section, { color: theme.colors.textSecondary }]}>Severity</Text>
+      <Text style={[styles.section, { color: theme.colors.textSecondary }]}>
+        Severity
+      </Text>
       <View style={styles.chipsRow}>
-        {(['All', 'Critical', 'Caution'] as SeverityFilter[]).map((s) => (
-          <Chip key={s} label={s} selected={severity === s} onPress={() => setSeverity(s)} />
+        {(['All', 'Critical', 'Caution'] as SeverityFilter[]).map(s => (
+          <Chip
+            key={s}
+            label={s}
+            selected={severity === s}
+            onPress={() => setSeverity(s)}
+          />
         ))}
       </View>
 
       {filtered.length === 0 ? (
         <GlassCard style={styles.empty}>
-          <Ionicons name="notifications-off-outline" size={26} color={theme.colors.accent} />
-          <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>No alerts match filters.</Text>
+          <Ionicons
+            name="notifications-off-outline"
+            size={26}
+            color={theme.colors.accent}
+          />
+          <Text
+            style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+            No alerts match filters.
+          </Text>
         </GlassCard>
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(a) => a._id}
+          keyExtractor={a => String(a._id)}
           scrollEnabled={false}
           renderItem={({ item }) => (
-            <GlassCard style={styles.card}>
-              <View style={styles.row}>
-                <View style={[styles.avatar, { backgroundColor: 'rgba(37,99,235,0.10)' }]}>
-                  <Ionicons name="person" size={18} color={theme.colors.accent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.patientName, { color: theme.colors.text }]} numberOfLines={1}>
-                    {item.patientName ?? 'Patient'}
-                  </Text>
-                  <Text style={[styles.msg, { color: theme.colors.textSecondary }]} numberOfLines={2}>
-                    {item.message}
-                  </Text>
-                  <View style={styles.bottomRow}>
-                    <RiskBadge level={item.riskLevel === 'CRITICAL' ? 'CRITICAL' : 'WARNING'} />
-                    <Text style={[styles.time, { color: theme.colors.textSecondary }]}>
-                      {formatTimeAgo(item.createdAt)}
-                    </Text>
+            <Pressable onPress={() => openAlert(item)}>
+              <GlassCard style={styles.card}>
+                <View style={styles.row}>
+                  <View
+                    style={[
+                      styles.avatar,
+                      { backgroundColor: 'rgba(37,99,235,0.10)' },
+                    ]}>
+                    <Ionicons
+                      name="person"
+                      size={18}
+                      color={theme.colors.accent}
+                    />
                   </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.nameRow}>
+                      <Text
+                        style={[styles.patientName, { color: theme.colors.text }]}
+                        numberOfLines={1}>
+                        {item.patientName ?? 'Patient'}
+                      </Text>
+                      {!item.isRead && (
+                        <View
+                          style={[
+                            styles.dot,
+                            { backgroundColor: theme.colors.accent },
+                          ]}
+                        />
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.msg,
+                        { color: theme.colors.textSecondary },
+                      ]}
+                      numberOfLines={2}>
+                      {item.message}
+                    </Text>
+                    <View style={styles.bottomRow}>
+                      <RiskBadge
+                        level={
+                          item.riskLevel === 'CRITICAL' ? 'CRITICAL' : 'WARNING'
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.time,
+                          { color: theme.colors.textSecondary },
+                        ]}>
+                        {formatTimeAgo(item.createdAt)} · Tap
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={theme.colors.textSecondary}
+                  />
                 </View>
-              </View>
-            </GlassCard>
+              </GlassCard>
+            </Pressable>
           )}
         />
       )}
+
+      <AlertDetailModal
+        alert={selected}
+        visible={Boolean(selected)}
+        onClose={() => setSelected(null)}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 22, fontWeight: '900', marginTop: 6 },
-  section: { marginTop: 14, fontSize: 12, fontWeight: '900', letterSpacing: 0.2 },
-  userChips: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
+  title: { fontSize: 20, fontWeight: '900', marginTop: 6 },
+  section: {
+    marginTop: 14,
+    marginBottom: 8,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  userChips: { paddingRight: 8, alignItems: 'center' },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   empty: { marginTop: 16, padding: 18, alignItems: 'center' },
-  emptyText: { marginTop: 10, fontSize: 13, fontWeight: '800' },
+  emptyText: { marginTop: 10, fontWeight: '800', textAlign: 'center' },
   card: { marginTop: 12, padding: 14 },
-  row: { flexDirection: 'row', alignItems: 'flex-start' },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   avatar: {
     width: 40,
     height: 40,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
   },
-  patientName: { fontSize: 14, fontWeight: '900' },
-  msg: { marginTop: 6, fontSize: 13, fontWeight: '700', lineHeight: 18 },
-  bottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  patientName: { fontSize: 14, fontWeight: '900', flex: 1 },
+  msg: { marginTop: 6, fontSize: 12, fontWeight: '700', lineHeight: 18 },
+  bottomRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   time: { fontSize: 11, fontWeight: '800' },
+  dot: { width: 8, height: 8, borderRadius: 999 },
 });

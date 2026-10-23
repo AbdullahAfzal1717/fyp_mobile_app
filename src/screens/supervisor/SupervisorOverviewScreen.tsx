@@ -44,9 +44,11 @@ export function SupervisorOverviewScreen() {
   const [patients, setPatients] = useState<PatientLite[]>([]);
   const [vitalsByUser, setVitalsByUser] = useState<Record<string, Vital | null>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const pulse = useState(() => new Animated.Value(1))[0];
 
   const load = useCallback(async () => {
+    setLoadError('');
     const list = await connectionsService.myUsers();
     setPatients(list);
     const entries = await Promise.all(
@@ -63,8 +65,10 @@ export function SupervisorOverviewScreen() {
     (async () => {
       try {
         await load();
-      } catch {
-        // ignore
+      } catch (e: unknown) {
+        setLoadError(
+          e instanceof Error ? e.message : 'Failed to load patients',
+        );
       }
     })();
   }, [load]);
@@ -169,6 +173,21 @@ export function SupervisorOverviewScreen() {
         ))}
       </View>
 
+      {!!loadError && (
+        <GlassCard style={styles.empty}>
+          <Text style={[styles.emptyText, { color: theme.colors.critical }]}>
+            {loadError}
+          </Text>
+          <Text
+            style={[
+              styles.emptyText,
+              { color: theme.colors.textSecondary, marginTop: 8 },
+            ]}>
+            Check backend is running and API IP in app.json.
+          </Text>
+        </GlassCard>
+      )}
+
       <FlatList
         data={filteredPatients}
         keyExtractor={(item) => patientId(item)}
@@ -176,7 +195,9 @@ export function SupervisorOverviewScreen() {
         ListEmptyComponent={
           <GlassCard style={styles.empty}>
             <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-              No patients match this filter.
+              {patients.length === 0
+                ? 'No linked patients yet. Ask a user to send a request with your supervisor code (or login as ahmed@test.com after seed).'
+                : 'No patients match this filter.'}
             </Text>
           </GlassCard>
         }

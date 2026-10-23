@@ -19,6 +19,10 @@
       "socketUrl": "http://192.168.100.175:5000",
       "googleWebClientId": "146798997938-ef4dk83lk4rn6qm24lvs1i61cmu6b50e.apps.googleusercontent.com"
     },
-    "plugins": ["@react-native-google-signin/google-signin", "expo-font", "expo-web-browser"]
+    "plugins": [
+      "@react-native-google-signin/google-signin",
+      "expo-font",
+      "expo-web-browser"
+    ]
   }
 }
